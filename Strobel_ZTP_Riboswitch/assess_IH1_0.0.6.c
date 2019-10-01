@@ -21,11 +21,13 @@
 #define MAXLINE 2048	//maximum line length
 #define MAXSEQS 2048	//maximum number of sequences to evaluate
 #define MAXLEN 64		//maximum input sequence length
+#define MAX_DG_INDX 500
 
 /* randomization mode values; 0 = no randomization*/
 #define RNDM 1
 #define CNSNS 2
 #define NBAL 3
+#define SHF 4
 
 /* base definitions */
 #define A 0
@@ -82,8 +84,10 @@ int read_fasta(struct fasta_entry *fa_ipt, char *ipt); 											//open input f
 int get_nt_freq(struct fasta_entry * fa_ipt, float (*base_cnt)[5]); 							//get positional nt frequency
 int mk_rnd_tbl(float (*base_cnt)[5], int rnd_tbl[MAXLEN][4], int mode);							//make randomization table
 int mk_ipt_fa_rnd(struct fasta_entry * fa_ipt, int rnd_tbl[MAXLEN][4], char * rnd_filename);	//make fasta file using randomization table
+int mk_ipt_fa_shf(struct fasta_entry * fa_ipt, char * rnd_filename);
 int mk_tmp_fa(struct fasta_entry * fa_ipt, struct RNA *RNAvar);									//make fasta input for RNAstructure
 int isbase(char c);                        														//test for IUPAC base notation
+int count_nts(char *ipt, char *shf);
 
 // ct file functions
 int eval_ct(struct RNA *RNAvar, struct bp_tbl_bank *crrnt_bpt_bank);							//evaluate ct file
@@ -102,6 +106,7 @@ int print_output(struct RNA *RNAvar);
 /* global variables */
 // options variables
 int rndm = 0;                   				//randomization mode, default is 0 for no randomization
+int shf = 0;
 int verbose = 0;								//flag for verbose output
 char consensus[MAXLEN] = {0};                    //user supplied consensus sequence for randomization mode 2
 
@@ -131,6 +136,7 @@ int main(int argc, char *argv[])
     extern int total_variants;
     extern int total_structures;
     extern int rndm;
+    extern int shf;
     extern int verbose;
     extern char consensus[MAXLEN];
     
@@ -172,13 +178,16 @@ int main(int argc, char *argv[])
         switch (c) {
             case 's':													//input fasta file
                 total_variants = read_fasta(fa_ipt, argv[optind-1]);	//get input fasta
-                for (i = 0; argv[optind-1][i] != '.'; i++) { 			//get input filename for output files TODO:grab up to last '.'
-                    filename[i] = argv[optind-1][i];
+                for (i = 0; !isalnum(argv[optind-1][i]); i++) {
+                    ;
                 }
-                filename[i] = '\0';
+                for (j = 0; argv[optind-1][i] != '.'; i++, j++) { 			//get input filename for output files TODO:grab up to last '.'
+                    filename[j] = argv[optind-1][i];
+                }
+                filename[j] = '\0';
                 break;
             case 'r':													//randomization option
-                if ((rndm = atoi(argv[optind-1])) > 3 || rndm == 0) { 	//TODO add specific errors for 0 or >2 conditions
+                if ((rndm = atoi(argv[optind-1])) > 4 || rndm == 0) { 	//TODO add specific errors for 0 or >4 conditions
                     printf("error: main - invalid value (%d) for option r\n", rndm);
                 }
                 break; //TODO: add error if atoi fails
@@ -202,9 +211,14 @@ int main(int argc, char *argv[])
     int rnd_tbl[MAXLEN][4] = {0};			//distribution of values used for randomization
     struct fasta_entry * rnd_ipt =  NULL;	//pointer for randomized fasta entries
     if (rndm) {
-        get_nt_freq(fa_ipt, base_cnt);         							//get positional nucleotide frequency
-        mk_rnd_tbl(base_cnt, rnd_tbl, rndm); 							//make randomization table
-        mk_ipt_fa_rnd(fa_ipt, rnd_tbl, rnd_filename);					//use randomization table to make input fasta
+        if (rndm <= 3) {
+            get_nt_freq(fa_ipt, base_cnt);                                     //get positional nucleotide frequency
+            mk_rnd_tbl(base_cnt, rnd_tbl, rndm);                             //make randomization table
+            mk_ipt_fa_rnd(fa_ipt, rnd_tbl, rnd_filename);                    //use randomization table to make input fasta
+        } else if (rndm == 4) {
+            mk_ipt_fa_shf(fa_ipt, rnd_filename);
+        }
+        
         
         printf("returned from making randomization fasta\n");
         if ((rnd_ipt = calloc(MAXSEQS, sizeof(*rnd_ipt))) == NULL) {	//allocate memory for randomized fasta
@@ -266,6 +280,7 @@ int mk_out_dir() {
         case 1: sprintf(out_dir, "%s_rnd_%X", filename, run_id); break;
         case 2: sprintf(out_dir, "%s_cnsns_%X", filename, run_id); break;
         case 3: sprintf(out_dir, "%s_nbal_%X", filename, run_id); break;
+    	case 4: sprintf(out_dir, "%s_shf_%X", filename, run_id); break;
         default:
             break;
     }
@@ -326,7 +341,9 @@ int read_fasta(struct fasta_entry * fa_ipt, char *ipt)
             return 0;
         } else if (line[0] != '>') {		//check that line does not begin with '>'
             line_len = strlen(line);		//get line length for memory allocation
-            line[line_len-1] = '\0';		//remove trailing newline
+            if (line[line_len-1] == '\n') {
+                line[line_len-1] = '\0';        //remove trailing newline
+            }
             fa_ipt[i].sq = malloc((line_len) * sizeof(fa_ipt[i].sq));    	//allocate memory for sequence TODO: check success
             strcpy(fa_ipt[i].sq, line);										//copy sequence (includes non-base chars);
             for (j = 0, seq_len = 0; line[j] && j < MAXLEN; j++) {			//determine sequence length
@@ -479,7 +496,7 @@ int mk_ipt_fa_rnd(struct fasta_entry * fa_ipt, int rnd_tbl[MAXLEN][4], char * rn
     for (i = 0; i < total_variants; i++) {
         for (j = 0, k = 0; fa_ipt[i].sq[j]; j++) { //TODO add error checking to ensure not leaving table bounds
             rnd = rand() % 1000;
-            if (fa_ipt[i].sq[j] != '-') {
+            if (fa_ipt[i].sq[j] != '-') { //TODO: make affirmative identification of base
                 if (rnd <= rnd_tbl[j][0]) {
                     rnd_seq[k++] = 'A';
                 } else if (rnd <= rnd_tbl[j][1]) {
@@ -505,6 +522,95 @@ int mk_ipt_fa_rnd(struct fasta_entry * fa_ipt, int rnd_tbl[MAXLEN][4], char * rn
     }
     printf("made randomization input fasta\n");
     return 1;
+}
+
+int mk_ipt_fa_shf(struct fasta_entry * fa_ipt, char * rnd_filename)
+{
+    printf("making shuffled input fasta\n");
+    FILE *tmp_fp = NULL;
+    int i = 0;
+    int j = 0;
+    int k = 0;
+    int rnd = 0;
+    char ipt_seq[MAXLEN] = {0};
+    char crnt_seq[MAXLEN] = {0};
+    char last_seq[MAXLEN] = {0};
+    char shf_seq[MAXLEN] = {0};
+    char * trail_seq;
+    int ipt_len = 0;
+    int crnt_len = 0;
+    int shf_len = 0;
+    
+
+    
+    sprintf(rnd_filename, "%s_%X_shf.fasta", filename, run_id);
+    tmp_fp = fopen(rnd_filename, "w");
+
+    for (i = 0; i < total_variants; i++) {
+        for (j = 0, k = 0; fa_ipt[i].sq[j]; j++) {
+            if (isbase(fa_ipt[i].sq[j])) {
+                ipt_seq[k++] = fa_ipt[i].sq[j];
+            }
+        }
+        ipt_seq[k] = '\0';
+        
+        strcpy(crnt_seq, ipt_seq);
+        crnt_len = ipt_len = strlen(ipt_seq);
+        //printf("ipt_seq:\t%s\t%d\n", ipt_seq, ipt_len);
+        
+        for (j = 0, k = 0; crnt_len > 0; k++, j++) { //TODO add error checking to ensure not leaving table bounds
+            if (!isbase(fa_ipt[i].sq[j])) {
+                shf_seq[k] = '-';
+            } else {
+                rnd = rand() % crnt_len;
+                //printf("rnd = %d\n", rnd);
+                
+                
+                shf_seq[k] = crnt_seq[rnd];
+                
+                
+                strcpy(last_seq, crnt_seq);
+                if (crnt_len > 2) {
+                    if (rnd == 0) {
+                        strcpy(crnt_seq, &last_seq[1]);
+                    } else if (rnd == crnt_len-1) {
+                        crnt_seq[crnt_len-1] = 0;
+                    } else {
+                        trail_seq = &last_seq[rnd+1];
+                        crnt_seq[rnd] = '\0';
+                        strcat(crnt_seq, trail_seq);
+                    }
+                } else {
+                    if (rnd == 0) {
+                        crnt_seq[0] = last_seq[1];
+                        crnt_seq[1] = '\0';
+                    } else if (rnd == 1) {
+                        crnt_seq[1] = '\0';
+                    } else {
+                        printf("shuffle error\n");
+                        abort();
+                    }
+                }
+                crnt_len--;
+            }
+            
+        }
+        shf_seq[k] = '\0';
+        
+        printf("%s\n%s\n", fa_ipt[i].sq, shf_seq);
+        count_nts(fa_ipt[i].sq, shf_seq);
+        if (!strcmp(fa_ipt[i].sq, shf_seq)) {
+            printf("sequence not shuffled; aborting\n");
+            abort();
+        }
+        shf_len = strlen(shf_seq);
+        //printf("shf_seq:\t%s\t%d\n", shf_seq, shf_len);
+        fprintf(tmp_fp, ">Shf%d\n%s\n", i, shf_seq);
+    }
+    fclose(tmp_fp); //TODO test success
+    
+    return 1;
+
 }
 
 /* mk_tmp_fa: make fasta file containing single sequence */
@@ -683,6 +789,11 @@ int test_dg_uniq(float dg, struct deltaG_frequency * dg_freq_tbl) //TODO: pass D
     tmp_dg_indx = (fabs(dg)*10);
     dg_indx = (int)(tmp_dg_indx);
     
+    if (dg_indx > MAX_DG_INDX) {
+        printf("test_dg_uniq: error - dg_indx exceeds MAX_DG_INDX. Aborting...\n");
+        abort();
+    }
+    
     if (dg_freq_tbl[dg_indx].cnt == 0) {
         dg_freq_tbl[dg_indx].val = dg;
         dg_freq_tbl[dg_indx].cnt++;
@@ -775,12 +886,17 @@ int print_output(struct RNA *RNAvar)
     tmp_fp = fopen(cdist_filename, "w");
     
     //print deltaG distribution
+    float f_crrnt = ((float)(MAX_DG_INDX))*-0.1;
+    float last_val = 0;
     fprintf(tmp_fp, "%s_dG\t%sFrac >= dG\n", out_dir, out_dir);
-    for (i = MAXSEQS-1, dg_sum = 0; i >= 0; i--) {
+    for (i = MAX_DG_INDX, dg_sum = 0, last_val = 0; i >= 0; i--) {
+        f_crrnt = ((float)(i))*-0.1;
         if (dg_freq[i].cnt > 0) {
             dg_sum += dg_freq[i].cnt;
-            fprintf(tmp_fp, "%f\t%1.4f\n", dg_freq[i].val, ((float)(dg_sum))/((float)(total_structures)));
+            last_val =((float)(dg_sum))/((float)(total_structures));
+			//fprintf(tmp_fp, "%f\t%1.4f\n", dg_freq[i].val, ((float)(dg_sum))/((float)(total_structures)));
         }
+        fprintf(tmp_fp, "%.1f\t%1.4f\n", f_crrnt, last_val);
     }
     if (fclose(tmp_fp) != 0) {
         printf("file not closed\n");
@@ -821,9 +937,9 @@ int print_output(struct RNA *RNAvar)
     }
     
     char pos_bp_cnt_filename[MAXLINE];
-    sprintf(pos_bp_cnt_filename, "%s_pos_bp_cnt.txt", outdir);
+    sprintf(pos_bp_cnt_filename, "%s_pos_bp_cnt.txt", out_dir);
     tmp_fp = fopen(pos_bp_cnt_filename, "w");
-    fprintf(tmp_fp, "pos\t%s_bp_cnt\ttotobs\n", outdir);
+    fprintf(tmp_fp, "pos\t%s_bp_cnt\ttotobs\n", out_dir);
     for (i = 0; i <= max_seq_indx; i++) {
         fprintf(tmp_fp, "%d\t%d\t%d\n", i+1, tot_pr_cnt[i], tot_obs_cnt[i]);
     }
@@ -875,6 +991,58 @@ int isbase(char c) {
     return 0;
 }
 
+int count_nts(char *ipt, char *shf)
+{
+    int i = 0;
+    int a_ipt = 0;
+    int u_ipt = 0;
+    int g_ipt = 0;
+    int c_ipt = 0;
+    
+    for(i = 0; ipt[i]; i++) {
+        switch (ipt[i]) {
+            case 'A': a_ipt++; break;
+            case 'U': u_ipt++; break;
+            case 'G': g_ipt++; break;
+            case 'C': c_ipt++; break;
+            case 'a': a_ipt++; break;
+            case 'u': u_ipt++; break;
+            case 'g': g_ipt++; break;
+            case 'c': c_ipt++; break;
+            default: break;
+        }
+    }
+    
+    int a_shf = 0;
+    int u_shf = 0;
+    int g_shf = 0;
+    int c_shf = 0;
+    
+    for(i = 0; shf[i]; i++) {
+        switch (shf[i]) {
+            case 'A': a_shf++; break;
+            case 'U': u_shf++; break;
+            case 'G': g_shf++; break;
+            case 'C': c_shf++; break;
+            case 'a': a_shf++; break;
+            case 'u': u_shf++; break;
+            case 'g': g_shf++; break;
+            case 'c': c_shf++; break;
+            default: break;
+        }
+    }
+    printf("%d\t%d\n", a_ipt, a_shf);
+    printf("%d\t%d\n", u_ipt, u_shf);
+    printf("%d\t%d\n", g_ipt, g_shf);
+    printf("%d\t%d\n\n", c_ipt, c_shf);
+    
+    if (a_ipt != a_shf || u_ipt != u_shf || g_ipt != g_shf || c_ipt != c_shf) {
+        printf("failed shuffle match\n");
+        return 0;
+    }
+    
+    return 1;
+}
 
 
 
