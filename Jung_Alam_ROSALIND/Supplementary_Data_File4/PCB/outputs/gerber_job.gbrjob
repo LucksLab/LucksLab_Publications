@@ -1,0 +1,13 @@
+G04 Gerber job file.*
+%TF.FileFunction,JobInfo*%
+%TF.GenerationSoftware,Autodesk,EAGLE,9.0.1*%
+%TF.CreationDate,2020-01-09T19:49:54Z*%
+%TF.Part,Single*%
+%MOMM*%
+%TJ.B_Owner,Bob Golenia <robgol2@comcast.net>*%
+%TJ.B_ID,viewer_rev2*%
+%TJ.B_LayerNum,2*%
+%TJ.B_Thickness,1.570000*%
+%TJ.B_Size_X,78.740000*%
+%TJ.B_Size_Y,44.450000*%
+M02*
