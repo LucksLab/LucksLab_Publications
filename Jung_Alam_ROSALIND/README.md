@@ -17,5 +17,7 @@ Below are the descriptions of the supplementary data files for the manuscript. T
 
 The following data is included in this GitHub repository:
 
+| File | Description |
+| ---: | :----------- |
 | Data File 4 | Instructions for 3D printing and assembling a hand-held illuminator (includes 3D print and CAD files for the illuminator + EPF and gbr files for the printed circuit board. |
 
